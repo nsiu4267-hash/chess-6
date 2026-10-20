@@ -1,0 +1,460 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>♟ Cờ vua</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 20px 12px 35px;
+  background: #eeeeee;
+  color: #222;
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+
+h1 { margin: 5px 0 8px; }
+.subtitle { color: #666; margin-bottom: 18px; }
+
+.panel {
+  width: min(100%, 560px);
+  margin: 0 auto 14px;
+  padding: 12px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 9px #00000012;
+}
+
+.controls {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+select, button {
+  font-size: 15px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+}
+
+button {
+  background: #252525;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover { background: #444; }
+
+#status {
+  font-weight: bold;
+  min-height: 24px;
+  margin: 8px 0;
+}
+
+#board {
+  width: min(94vw, 560px);
+  height: min(94vw, 560px);
+  max-width: 560px;
+  max-height: 560px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
+  border: 4px solid #252525;
+  box-shadow: 0 5px 16px #00000020;
+  user-select: none;
+}
+
+.square {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  aspect-ratio: 1;
+}
+
+.light { background: #ffffff; }
+.dark { background: #222222; }
+
+.piece {
+  font-family: "DejaVu Sans", "Segoe UI Symbol",
+               "Noto Sans Symbols 2", serif;
+  font-size: clamp(24px, 7vw, 49px);
+  line-height: 1;
+  z-index: 1;
+}
+
+.white-piece {
+  color: #ffffff;
+  -webkit-text-stroke: 1px #111;
+  text-shadow: 1px 2px 1px #0008;
+}
+
+.black-piece {
+  color: #090909;
+  text-shadow: 0 1px 1px #777;
+}
+
+.selected {
+  box-shadow: inset 0 0 0 4px #00aaff;
+}
+
+.last-move {
+  background-image: linear-gradient(#ffdb0055, #ffdb0055);
+}
+
+.legal::after {
+  content: "";
+  position: absolute;
+  width: 25%;
+  height: 25%;
+  border-radius: 50%;
+  background: #13b85c99;
+}
+
+.legal.has-piece::after {
+  width: 82%;
+  height: 82%;
+  background: transparent;
+  border: 5px solid #13b85cbb;
+}
+
+#message {
+  margin-top: 12px;
+  min-height: 25px;
+  font-weight: bold;
+}
+
+#score { color: #666; font-size: 14px; }
+
+@media (max-width: 380px) {
+  body { padding-left: 5px; padding-right: 5px; }
+  .piece { font-size: 25px; }
+}
+</style>
+</head>
+
+<body>
+<h1>♟ CỜ VUA</h1>
+<div class="subtitle">64 ô cờ • Hai người hoặc đấu với máy</div>
+
+<div class="panel">
+  <div class="controls">
+    <select id="mode" aria-label="Chế độ chơi">
+      <option value="computer">Đấu với máy</option>
+      <option value="two">Hai người chơi</option>
+    </select>
+
+    <select id="level" aria-label="Độ khó">
+      <option value="easy">Dễ</option>
+      <option value="medium">Trung bình</option>
+      <option value="hard">Khó</option>
+    </select>
+
+    <button id="restart">↻ Chơi lại</button>
+  </div>
+  <div id="status">Trắng đi trước</div>
+</div>
+
+<div id="board" aria-label="Bàn cờ vua"></div>
+
+<div class="panel">
+  <div id="message">Chọn quân cờ rồi chọn ô muốn đi.</div>
+  <p id="score">Lượt đi: 0</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script>
+const boardEl = document.getElementById("board");
+const statusEl = document.getElementById("status");
+const messageEl = document.getElementById("message");
+const scoreEl = document.getElementById("score");
+const modeEl = document.getElementById("mode");
+const levelEl = document.getElementById("level");
+
+const symbols = {
+  wk:"♔", wq:"♕", wr:"♖", wb:"♗", wn:"♘", wp:"♙",
+  bk:"♚", bq:"♛", br:"♜", bb:"♝", bn:"♞", bp:"♟"
+};
+
+let game;
+let selected = null;
+let legalTargets = [];
+let lastMove = null;
+let moveCount = 0;
+let thinking = false;
+
+function newGame() {
+  game = new Chess();
+  selected = null;
+  legalTargets = [];
+  lastMove = null;
+  moveCount = 0;
+  thinking = false;
+  messageEl.textContent = "Chọn quân cờ rồi chọn ô muốn đi.";
+  render();
+}
+
+function squareName(row, col) {
+  return "abcdefgh"[col] + (8 - row);
+}
+
+function render() {
+  boardEl.innerHTML = "";
+  const position = game.board();
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const name = squareName(r, c);
+      const piece = position[r][c];
+      const square = document.createElement("div");
+
+      square.className = "square " +
+        ((r + c) % 2 === 0 ? "light" : "dark");
+
+      if (lastMove &&
+          (name === lastMove.from || name === lastMove.to)) {
+        square.classList.add("last-move");
+      }
+
+      if (name === selected) square.classList.add("selected");
+
+      if (legalTargets.includes(name)) {
+        square.classList.add("legal");
+        if (piece) square.classList.add("has-piece");
+      }
+
+      if (piece) {
+        const span = document.createElement("span");
+        span.className = "piece " +
+          (piece.color === "w" ? "white-piece" : "black-piece");
+        span.textContent = symbols[piece.color + piece.type];
+        square.appendChild(span);
+      }
+
+      square.addEventListener("click", () => clickSquare(name));
+      boardEl.appendChild(square);
+    }
+  }
+
+  updateStatus();
+}
+
+function updateStatus() {
+  if (game.in_checkmate()) {
+    statusEl.textContent =
+      "CHIẾU HẾT! " +
+      (game.turn() === "w" ? "Đen" : "Trắng") + " thắng!";
+    messageEl.textContent = "Ván cờ đã kết thúc.";
+  } else if (game.in_draw()) {
+    statusEl.textContent = "Ván cờ hòa!";
+    messageEl.textContent = "Hai bên hòa nhau.";
+  } else {
+    const side = game.turn() === "w" ? "Trắng" : "Đen";
+    statusEl.textContent = side + " đến lượt đi" +
+      (game.in_check() ? " — ĐANG BỊ CHIẾU!" : "");
+  }
+
+  scoreEl.textContent = "Lượt đi: " + moveCount;
+
+  const computerTurn =
+    modeEl.value === "computer" && game.turn() === "b";
+
+  levelEl.disabled = modeEl.value !== "computer";
+  boardEl.style.pointerEvents =
+    (thinking || computerTurn || game.game_over()) ? "none" : "auto";
+  boardEl.style.opacity = thinking ? "0.75" : "1";
+}
+
+function clickSquare(name) {
+  if (thinking || game.game_over()) return;
+  if (modeEl.value === "computer" && game.turn() === "b") return;
+
+  const piece = game.get(name);
+
+  if (selected && legalTargets.includes(name)) {
+    playMove(selected, name);
+    return;
+  }
+
+  if (piece && piece.color === game.turn()) {
+    selected = name;
+    legalTargets = game.moves({ square: name, verbose: true })
+      .map(m => m.to);
+    render();
+    messageEl.textContent = legalTargets.length
+      ? "Đã chọn " + name + ". Hãy chọn ô đích."
+      : "Quân này hiện không có nước đi hợp lệ.";
+    return;
+  }
+
+  selected = null;
+  legalTargets = [];
+  render();
+}
+
+function playMove(from, to, promotion = "q") {
+  let result;
+
+  try {
+    result = game.move({ from, to, promotion });
+  } catch (e) {
+    result = null;
+  }
+
+  if (!result) {
+    selected = null;
+    legalTargets = [];
+    render();
+    return;
+  }
+
+  lastMove = { from, to };
+  moveCount++;
+  selected = null;
+  legalTargets = [];
+  render();
+
+  if (!game.game_over() && modeEl.value === "computer" &&
+      game.turn() === "b") {
+    thinking = true;
+    updateStatus();
+    messageEl.textContent = "Máy đang suy nghĩ...";
+    window.setTimeout(computerMove, 250);
+  }
+}
+
+function computerMove() {
+  if (game.game_over()) {
+    thinking = false;
+    render();
+    return;
+  }
+
+  const level = levelEl.value;
+  const moves = game.moves({ verbose: true });
+  let chosen;
+
+  if (level === "easy") {
+    chosen = moves[Math.floor(Math.random() * moves.length)];
+  } else if (level === "medium") {
+    // Ưu tiên ăn quân, chiếu tướng và phong cấp.
+    const ranked = moves.map(m => {
+      let score = Math.random() * 3;
+      if (m.captured) score += pieceValue(m.captured) * 1.5;
+      if (m.san.includes("+")) score += 4;
+      if (m.san.includes("#")) score += 10000;
+      if (m.promotion) score += 8;
+      return { move: m, score };
+    });
+    ranked.sort((a, b) => b.score - a.score);
+    chosen = ranked[0].move;
+  } else {
+    // Tìm kiếm minimax có cắt tỉa alpha-beta.
+    let bestScore = -Infinity;
+    let bestMoves = [];
+    for (const m of moves) {
+      const copy = new Chess(game.fen());
+      copy.move({ from: m.from, to: m.to, promotion: m.promotion || "q" });
+      const score = -minimax(copy, 2, -Infinity, Infinity, false);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMoves = [m];
+      } else if (score === bestScore) {
+        bestMoves.push(m);
+      }
+    }
+    chosen = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+  }
+
+  thinking = false;
+  if (chosen) playMove(chosen.from, chosen.to, chosen.promotion || "q");
+  else render();
+}
+
+function pieceValue(type) {
+  return ({ p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 })[type] || 0;
+}
+
+function evaluate(position) {
+  if (position.in_checkmate()) {
+    return position.turn() === "w" ? -100000 : 100000;
+  }
+  if (position.in_draw()) return 0;
+
+  let score = 0;
+  const b = position.board();
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = b[r][c];
+      if (!p) continue;
+
+      const value = pieceValue(p.type);
+      const sign = p.color === "w" ? 1 : -1;
+      score += sign * value;
+
+      // Khuyến khích quân tiến vào trung tâm.
+      const center = 3.5 - (Math.abs(3.5-r) + Math.abs(3.5-c)) / 2;
+      if (p.type === "n" || p.type === "b") score += sign * center * 8;
+      if (p.type === "p") {
+        score += sign * (p.color === "w" ? 6-r : r-1) * 7;
+      }
+    }
+  }
+  return score;
+}
+
+function minimax(position, depth, alpha, beta, maximizing) {
+  if (depth === 0 || position.game_over()) {
+    const value = evaluate(position);
+    return position.turn() === "b" ? value : -value;
+  }
+
+  const moves = position.moves({ verbose: true });
+
+  if (maximizing) {
+    let best = -Infinity;
+    for (const m of moves) {
+      const copy = new Chess(position.fen());
+      copy.move({ from: m.from, to: m.to, promotion: m.promotion || "q" });
+      best = Math.max(best, minimax(copy, depth - 1, alpha, beta, false));
+      alpha = Math.max(alpha, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  } else {
+    let best = Infinity;
+    for (const m of moves) {
+      const copy = new Chess(position.fen());
+      copy.move({ from: m.from, to: m.to, promotion: m.promotion || "q" });
+      best = Math.min(best, minimax(copy, depth - 1, alpha, beta, true));
+      beta = Math.min(beta, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  }
+}
+
+document.getElementById("restart").addEventListener("click", newGame);
+modeEl.addEventListener("change", newGame);
+levelEl.addEventListener("change", newGame);
+
+if (typeof Chess === "undefined") {
+  statusEl.textContent = "Không tải được luật cờ vua. Hãy kiểm tra kết nối mạng.";
+} else {
+  newGame();
+}
+</script>
+</body>
+</html>
